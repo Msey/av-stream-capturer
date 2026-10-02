@@ -258,7 +258,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     if (g_previewSrv) {
       const float avail = ImGui::GetContentRegionAvail().x * 0.62f;
       const float height = avail * (preview.height > 0 ? static_cast<float>(preview.height) / preview.width : 0.5625f);
-      ImGui::Image(reinterpret_cast<ImTextureID>(g_previewSrv), ImVec2(avail, height));
+      ImGui::Image(reinterpret_cast<ImTextureID>(g_previewSrv), ImVec2(avail, height), ImVec2(0, 0), ImVec2(1, 1),
+                   ImVec4(1, 1, 1, 1), ImVec4(0.35f, 0.35f, 0.35f, 1));
     } else {
       ImGui::TextUnformatted("Нет кадра с камеры");
     }
@@ -306,8 +307,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     if (ImGui::SliderInt("Доп. сдвиг звука, мс", &lip, -80, 200)) g_params.lipExtraMs.store(lip);
 
     ImGui::Separator();
-    ImGui::Text("Кадр: %.1f мс, %.0f fps, лицо: %s", g_params.videoProcessMs.load(), g_params.captureFps.load(),
-                g_params.faceFound.load() ? "да" : "нет");
+    ImGui::Text("Кадр: %dx%d, %.1f мс, %.0f fps, лицо: %s", preview.width, preview.height,
+                g_params.videoProcessMs.load(), g_params.captureFps.load(), g_params.faceFound.load() ? "да" : "нет");
     ImGui::Text("Звук: %.0f мс (алгоритм %.0f + устройство %.0f)", g_params.audioTotalMs.load(),
                 g_params.audioAlgoMs.load(), g_params.wasapiMs.load());
     ImGui::TextWrapped("%s", g_camera->status().c_str());

@@ -207,7 +207,8 @@ bool openClient(const std::wstring& id, EDataFlow flow, IAudioClient** client, F
   else hr = enumerator->GetDevice(id.c_str(), &device);
   enumerator->Release();
   if (FAILED(hr) || !device) {
-    error = flow == eCapture ? "Микрофон не найден" : "Устройство вывода не найдено";
+    error = flow == eCapture ? "Микрофон не найден"
+                             : "Нет активного устройства воспроизведения. Включите динамики или подключите наушники.";
     return false;
   }
   hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(client));

@@ -15,6 +15,8 @@ cmake -S . -B build -G "Visual Studio 18 2026" -A x64
 cmake --build build --config Release
 ```
 
+В Visual Studio откройте `build\conference-fx.slnx`. Стартовый проект — `conference-fx`: F5 собирает его и запускает окно. Рядом с exe уже лежат модель и `onnxruntime.dll`.
+
 Проверки:
 
 ```bat

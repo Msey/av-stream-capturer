@@ -59,7 +59,8 @@ std::vector<AudioEndpoint> enumerateAudio(bool capture) {
   const std::wstring fallback = defaultAudioId(capture);
   IMMDeviceCollection* collection = nullptr;
   const EDataFlow flow = capture ? eCapture : eRender;
-  if (FAILED(enumerator->EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE, &collection))) {
+  const DWORD states = DEVICE_STATE_ACTIVE | DEVICE_STATE_UNPLUGGED;
+  if (FAILED(enumerator->EnumAudioEndpoints(flow, states, &collection))) {
     enumerator->Release();
     return result;
   }
@@ -85,7 +86,11 @@ std::vector<AudioEndpoint> enumerateAudio(bool capture) {
       PropVariantClear(&value);
       store->Release();
     }
+    DWORD state = DEVICE_STATE_ACTIVE;
+    device->GetState(&state);
+    endpoint.active = state == DEVICE_STATE_ACTIVE;
     if (endpoint.name.empty()) endpoint.name = endpoint.capture ? L"Микрофон" : L"Выход";
+    if (!endpoint.active) endpoint.name += L" (не подключено)";
     endpoint.cable = !capture && looksLikeCable(endpoint.name);
     endpoint.isDefault = !fallback.empty() && endpoint.id == fallback;
     result.push_back(std::move(endpoint));

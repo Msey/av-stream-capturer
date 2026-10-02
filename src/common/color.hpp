@@ -10,6 +10,13 @@ inline uint8_t clampByte(int value) {
   return static_cast<uint8_t>(std::clamp(value, 0, 255));
 }
 
+inline void forceOpaqueBgra(uint8_t* bgra, int width, int height, int stride) {
+  for (int y = 0; y < height; ++y) {
+    uint8_t* row = bgra + static_cast<size_t>(y) * stride;
+    for (int x = 0; x < width; ++x) row[x * 4 + 3] = 255;
+  }
+}
+
 inline void scaleBgra(const uint8_t* src, int srcW, int srcH, int srcStride, uint8_t* dst, int dstW, int dstH,
                       int dstStride) {
   if (srcW == dstW && srcH == dstH) {
@@ -17,6 +24,7 @@ inline void scaleBgra(const uint8_t* src, int srcW, int srcH, int srcStride, uin
       std::memcpy(dst + static_cast<size_t>(y) * dstStride, src + static_cast<size_t>(y) * srcStride,
                   static_cast<size_t>(dstW) * 4);
     }
+    forceOpaqueBgra(dst, dstW, dstH, dstStride);
     return;
   }
   for (int y = 0; y < dstH; ++y) {
@@ -34,11 +42,12 @@ inline void scaleBgra(const uint8_t* src, int srcW, int srcH, int srcStride, uin
       const uint8_t* p10 = src + static_cast<size_t>(y0) * srcStride + x1 * 4;
       const uint8_t* p01 = src + static_cast<size_t>(y1) * srcStride + x0 * 4;
       const uint8_t* p11 = src + static_cast<size_t>(y1) * srcStride + x1 * 4;
-      for (int c = 0; c < 4; ++c) {
+      for (int c = 0; c < 3; ++c) {
         const float top = p00[c] + (p10[c] - p00[c]) * tx;
         const float bot = p01[c] + (p11[c] - p01[c]) * tx;
         out[x * 4 + c] = static_cast<uint8_t>(top + (bot - top) * ty + 0.5f);
       }
+      out[x * 4 + 3] = 255;
     }
   }
 }

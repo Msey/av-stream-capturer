@@ -11,6 +11,7 @@ struct AudioEndpoint {
   bool capture = false;
   bool cable = false;
   bool isDefault = false;
+  bool active = true;
 };
 
 struct CameraDevice {
