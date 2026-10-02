@@ -1,0 +1,15 @@
+/build/
+/out/
+/third_party/onnxruntime-win-x64-*.zip
+/third_party/buffalo_sc/
+/third_party/buffalo_sc.zip
+*.pdb
+.vs/
+CMakeUserPresets.json
+*.user
+*.suo
+*.VC.db
+*.obj
+*.ilk
+*.exp
+*.log
