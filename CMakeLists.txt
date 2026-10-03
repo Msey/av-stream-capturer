@@ -77,10 +77,6 @@ target_link_options(conference-fx PRIVATE
 )
 cfx_compile(conference-fx)
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT conference-fx)
-set_target_properties(conference-fx PROPERTIES
-  VS_DEBUGGER_COMMAND "$<TARGET_FILE:conference-fx>"
-  VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:conference-fx>"
-)
 
 set(ORT_DLL ${ORT_DIR}/lib/onnxruntime.dll)
 set(ORT_SHARED ${ORT_DIR}/lib/onnxruntime_providers_shared.dll)
