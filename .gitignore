@@ -2,6 +2,7 @@
 /out/
 /third_party/onnxruntime-win-x64-*.zip
 /third_party/buffalo_sc/
+/third_party/vadrv/
 /third_party/buffalo_sc.zip
 *.pdb
 .vs/

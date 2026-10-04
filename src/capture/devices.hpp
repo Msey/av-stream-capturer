@@ -22,6 +22,10 @@ struct CameraDevice {
 std::vector<AudioEndpoint> enumerateAudio(bool capture);
 std::wstring defaultAudioId(bool capture);
 bool looksLikeCable(const std::wstring& name);
+bool isVirtualCablePlayback(const std::wstring& name);
+bool isVirtualCableMicrophone(const std::wstring& name);
+std::wstring virtualCablePlaybackId(const std::vector<AudioEndpoint>& outputs);
+std::wstring virtualCableMicrophoneName(const std::vector<AudioEndpoint>& inputs);
 
 std::vector<CameraDevice> enumerateCameras();
 

@@ -69,6 +69,7 @@ target_link_libraries(conference-fx PRIVATE
   strmiids
   propsys
   dwmapi
+  shell32
 )
 target_link_options(conference-fx PRIVATE
   "/MANIFEST:EMBED"

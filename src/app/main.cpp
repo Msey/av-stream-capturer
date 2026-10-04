@@ -12,6 +12,7 @@
 #include <d3d11.h>
 #include <dxgi.h>
 #include <mfapi.h>
+#include <shellapi.h>
 
 #include <algorithm>
 #include <string>
@@ -41,6 +42,7 @@ int g_previewH = 0;
 std::wstring g_micId;
 std::wstring g_outId;
 std::wstring g_camLink;
+bool g_outputLocked = false;
 
 std::string utf8(const std::wstring& text) {
   if (text.empty()) return {};
@@ -216,7 +218,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
   auto outputs = cfx::enumerateAudio(false);
   auto cameras = cfx::enumerateCameras();
   g_micId = cfx::defaultAudioId(true);
-  g_outId = cfx::defaultAudioId(false);
+  const std::wstring cablePlayback = cfx::virtualCablePlaybackId(outputs);
+  g_outId = !cablePlayback.empty() ? cablePlayback : cfx::defaultAudioId(false);
   if (!cameras.empty()) g_camLink = cameras.front().link;
 
   g_audio = new cfx::AudioEngine(g_params);
@@ -241,6 +244,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
       outputs = cfx::enumerateAudio(false);
       cameras = cfx::enumerateCameras();
       registered = cameraRegistered();
+      if (!g_outputLocked) {
+        const std::wstring cablePlayback = cfx::virtualCablePlaybackId(outputs);
+        if (!cablePlayback.empty() && cablePlayback != g_outId) {
+          g_outId = cablePlayback;
+          g_audio->setDevices(g_micId, g_outId);
+        }
+      }
       lastEnum = GetTickCount64();
     }
 
@@ -362,16 +372,28 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     }
     if (comboDevices("Куда писать звук", outNames, outIndex) && outIndex >= 0 &&
         outIndex < static_cast<int>(outputs.size())) {
+      g_outputLocked = true;
       g_outId = outputs[static_cast<size_t>(outIndex)].id;
       g_audio->setDevices(g_micId, g_outId);
     }
 
     ImGui::Separator();
+    const std::wstring appMicName = cfx::virtualCableMicrophoneName(microphones);
+    if (!appMicName.empty()) {
+      const std::string appMicLabel = utf8(appMicName);
+      ImGui::TextWrapped(
+          "Голосовые и звонки: в Телеграме, Скайпе и Teams выберите микрофон «%s». Туда уже пишется обработанный голос.",
+          appMicLabel.c_str());
+    } else {
+      ImGui::TextWrapped(
+          "Чтобы мультяшный голос попал в голосовое и на созвон, поставьте VB-CABLE с vb-audio.com. Это отдельный donationware-драйвер, его нельзя встроить в установку программы. После установки перезагрузите компьютер: здесь само выберется CABLE Input, а в Телеграме микрофоном будет CABLE Output.");
+      if (ImGui::Button("Открыть страницу VB-CABLE")) {
+        ShellExecuteW(nullptr, L"open", L"https://vb-audio.com/Cable/", nullptr, nullptr, SW_SHOWNORMAL);
+      }
+    }
     ImGui::Text("Виртуальная камера: %s", registered ? "зарегистрирована" : "не зарегистрирована");
     if (ImGui::Button("Зарегистрировать Conference FX Camera")) registered = registerCamera() && cameraRegistered();
-    ImGui::TextWrapped(
-        "В созвоне выберите камеру «Conference FX Camera» и микрофон «CABLE Output», если звук пишется в CABLE Input. "
-        "Пока кабеля нет, оставьте вывод на наушники и включите «Слушать в наушниках».");
+    ImGui::TextWrapped("В созвоне камеру выберите «Conference FX Camera». Галка «Слушать в наушниках» оставляет копию голоса у вас.");
     ImGui::EndChild();
     ImGui::End();
 

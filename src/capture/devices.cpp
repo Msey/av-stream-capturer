@@ -25,11 +25,42 @@ std::wstring lowerCopy(std::wstring text) {
 
 }  // namespace
 
+bool containsLower(const std::wstring& name, const wchar_t* needle) {
+  return lowerCopy(name).find(needle) != std::wstring::npos;
+}
+
 bool looksLikeCable(const std::wstring& name) {
-  const std::wstring lower = lowerCopy(name);
-  return lower.find(L"cable input") != std::wstring::npos || lower.find(L"vb-audio") != std::wstring::npos ||
-         lower.find(L"voicemeeter") != std::wstring::npos || lower.find(L"virtual cable") != std::wstring::npos ||
-         lower.find(L"cable") != std::wstring::npos;
+  return isVirtualCablePlayback(name) || isVirtualCableMicrophone(name);
+}
+
+bool isVirtualCablePlayback(const std::wstring& name) {
+  return containsLower(name, L"cable input") || containsLower(name, L"voicemeeter input") ||
+         containsLower(name, L"voicemeeter aux input");
+}
+
+bool isVirtualCableMicrophone(const std::wstring& name) {
+  return containsLower(name, L"cable output") || containsLower(name, L"voicemeeter output") ||
+         containsLower(name, L"voicemeeter aux output");
+}
+
+std::wstring virtualCablePlaybackId(const std::vector<AudioEndpoint>& outputs) {
+  std::wstring fallback;
+  for (const AudioEndpoint& endpoint : outputs) {
+    if (!endpoint.active || !isVirtualCablePlayback(endpoint.name)) continue;
+    if (containsLower(endpoint.name, L"cable input")) return endpoint.id;
+    if (fallback.empty()) fallback = endpoint.id;
+  }
+  return fallback;
+}
+
+std::wstring virtualCableMicrophoneName(const std::vector<AudioEndpoint>& inputs) {
+  std::wstring fallback;
+  for (const AudioEndpoint& endpoint : inputs) {
+    if (!endpoint.active || !isVirtualCableMicrophone(endpoint.name)) continue;
+    if (containsLower(endpoint.name, L"cable output")) return endpoint.name;
+    if (fallback.empty()) fallback = endpoint.name;
+  }
+  return fallback;
 }
 
 std::wstring defaultAudioId(bool capture) {
