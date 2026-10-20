@@ -176,7 +176,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
-  CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
   MFStartup(MF_VERSION);
   g_shared.open();
 
@@ -191,6 +191,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                               CW_USEDEFAULT, 1180, 820, nullptr, nullptr, instance, nullptr);
   if (!hwnd || !createDevice(hwnd)) {
     MessageBoxW(hwnd, L"Не удалось создать окно Direct3D.", L"Conference FX", MB_ICONERROR);
+    if (hwnd) DestroyWindow(hwnd);
+    g_shared.close();
+    MFShutdown();
+    if (com == S_OK) CoUninitialize();
     return 1;
   }
   createRtv();
@@ -420,6 +424,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
   if (g_device) g_device->Release();
   g_shared.close();
   MFShutdown();
-  CoUninitialize();
+  if (com == S_OK) CoUninitialize();
   return 0;
 }

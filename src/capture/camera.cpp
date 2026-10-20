@@ -19,6 +19,9 @@
 #include <mfidl.h>
 #include <mfreadwrite.h>
 #include <mferror.h>
+#include <wrl/client.h>
+
+using Microsoft::WRL::ComPtr;
 
 namespace cfx {
 namespace {
@@ -55,6 +58,12 @@ bool setRgb32(IMFSourceReader* reader, UINT32 width, UINT32 height) {
   const HRESULT hr = reader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, type);
   type->Release();
   return SUCCEEDED(hr);
+}
+
+void closeCameraSource(ComPtr<IMFSourceReader>& reader, ComPtr<IMFMediaSource>& source) {
+  reader.Reset();
+  if (source) source->Shutdown();
+  source.Reset();
 }
 
 }  // namespace
@@ -122,7 +131,6 @@ std::string CameraCapture::status() const {
 void CameraCapture::threadMain() {
   const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   MFStartup(MF_VERSION);
-  std::vector<uint8_t> bgra;
   std::vector<uint8_t> scaled;
   auto lastTick = std::chrono::steady_clock::now();
 
@@ -134,61 +142,63 @@ void CameraCapture::threadMain() {
     }
     impl_->restart.store(0);
 
-    IMFAttributes* attributes = nullptr;
+    ComPtr<IMFAttributes> attributes;
     if (FAILED(MFCreateAttributes(&attributes, 2))) break;
     attributes->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID);
     if (!link.empty()) attributes->SetString(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, link.c_str());
-    IMFMediaSource* source = nullptr;
-    HRESULT hr = MFCreateDeviceSource(attributes, &source);
-    attributes->Release();
+    ComPtr<IMFMediaSource> source;
+    HRESULT hr = MFCreateDeviceSource(attributes.Get(), &source);
+    attributes.Reset();
     if (FAILED(hr) && link.empty()) {
       auto cameras = enumerateCameras();
       if (!cameras.empty()) {
-        IMFAttributes* retry = nullptr;
+        ComPtr<IMFAttributes> retry;
         if (SUCCEEDED(MFCreateAttributes(&retry, 2))) {
           retry->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID);
           retry->SetString(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, cameras.front().link.c_str());
-          hr = MFCreateDeviceSource(retry, &source);
-          retry->Release();
+          hr = MFCreateDeviceSource(retry.Get(), &source);
         }
       }
     }
     if (FAILED(hr) || !source) {
+      if (source) {
+        source->Shutdown();
+        source.Reset();
+      }
       std::lock_guard lock(impl_->statusMu);
       impl_->status = "Камера не найдена";
       for (int i = 0; i < 10 && impl_->run.load() && !impl_->restart.load(); ++i) Sleep(50);
       continue;
     }
 
-    IMFAttributes* readerAttr = nullptr;
+    ComPtr<IMFAttributes> readerAttr;
     MFCreateAttributes(&readerAttr, 2);
     if (readerAttr) {
       readerAttr->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
       readerAttr->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
     }
-    IMFSourceReader* reader = nullptr;
-    hr = MFCreateSourceReaderFromMediaSource(source, readerAttr, &reader);
-    if (readerAttr) readerAttr->Release();
-    source->Release();
+    ComPtr<IMFSourceReader> reader;
+    hr = MFCreateSourceReaderFromMediaSource(source.Get(), readerAttr.Get(), &reader);
+    readerAttr.Reset();
     if (FAILED(hr) || !reader) {
+      closeCameraSource(reader, source);
       std::lock_guard lock(impl_->statusMu);
       impl_->status = "Не удалось читать камеру";
       Sleep(300);
       continue;
     }
-    if (!setRgb32(reader, 1280, 720)) {
+    if (!setRgb32(reader.Get(), 1280, 720)) {
       bool chosen = false;
       for (DWORD index = 0; index < 32 && !chosen; ++index) {
-        IMFMediaType* native = nullptr;
+        ComPtr<IMFMediaType> native;
         if (FAILED(reader->GetNativeMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, index, &native))) break;
         UINT32 width = 0;
         UINT32 height = 0;
-        MFGetAttributeSize(native, MF_MT_FRAME_SIZE, &width, &height);
-        native->Release();
-        if (width >= 320 && height >= 240 && setRgb32(reader, width, height)) chosen = true;
+        MFGetAttributeSize(native.Get(), MF_MT_FRAME_SIZE, &width, &height);
+        if (width >= 320 && height >= 240 && setRgb32(reader.Get(), width, height)) chosen = true;
       }
       if (!chosen) {
-        reader->Release();
+        closeCameraSource(reader, source);
         std::lock_guard lock(impl_->statusMu);
         impl_->status = "Камера не отдаёт поддерживаемый формат";
         Sleep(300);
@@ -198,10 +208,9 @@ void CameraCapture::threadMain() {
 
     UINT32 width = 1280;
     UINT32 height = 720;
-    IMFMediaType* current = nullptr;
+    ComPtr<IMFMediaType> current;
     if (SUCCEEDED(reader->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, &current))) {
-      MFGetAttributeSize(current, MF_MT_FRAME_SIZE, &width, &height);
-      current->Release();
+      MFGetAttributeSize(current.Get(), MF_MT_FRAME_SIZE, &width, &height);
     }
     {
       std::lock_guard lock(impl_->statusMu);
@@ -210,23 +219,16 @@ void CameraCapture::threadMain() {
 
     while (impl_->run.load() && !impl_->restart.load()) {
       DWORD flags = 0;
-      IMFSample* sample = nullptr;
+      ComPtr<IMFSample> sample;
       hr = reader->ReadSample(MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, nullptr, &flags, nullptr, &sample);
       if (FAILED(hr)) break;
       if (!sample) continue;
-      IMFMediaBuffer* buffer = nullptr;
-      if (FAILED(sample->ConvertToContiguousBuffer(&buffer))) {
-        sample->Release();
-        continue;
-      }
+      ComPtr<IMFMediaBuffer> buffer;
+      if (FAILED(sample->ConvertToContiguousBuffer(&buffer))) continue;
       BYTE* data = nullptr;
       DWORD maxLen = 0;
       DWORD curLen = 0;
-      if (FAILED(buffer->Lock(&data, &maxLen, &curLen)) || !data) {
-        buffer->Release();
-        sample->Release();
-        continue;
-      }
+      if (FAILED(buffer->Lock(&data, &maxLen, &curLen)) || !data) continue;
       int srcStride = static_cast<int>(width) * 4;
       if (height > 0 && curLen / height >= static_cast<DWORD>(srcStride)) srcStride = static_cast<int>(curLen / height);
       int outW = static_cast<int>(width);
@@ -236,8 +238,6 @@ void CameraCapture::threadMain() {
       if (static_cast<int>(scaled.size()) < outStride * outH) scaled.resize(static_cast<size_t>(outStride) * outH);
       scaleBgra(data, static_cast<int>(width), static_cast<int>(height), srcStride, scaled.data(), outW, outH, outStride);
       buffer->Unlock();
-      buffer->Release();
-      sample->Release();
 
       if (params_.mirror.load()) mirrorBgra(scaled.data(), outW, outH, outStride);
 
@@ -270,11 +270,11 @@ void CameraCapture::threadMain() {
         impl_->frame.bgra.assign(scaled.begin(), scaled.begin() + static_cast<size_t>(outStride) * outH);
       }
     }
-    reader->Release();
+    closeCameraSource(reader, source);
   }
 
   MFShutdown();
-  if (SUCCEEDED(com)) CoUninitialize();
+  if (com == S_OK) CoUninitialize();
 }
 
 }  // namespace cfx

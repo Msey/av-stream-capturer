@@ -263,13 +263,26 @@ class TypeEnum : public IEnumMediaTypes {
   }
   STDMETHODIMP Next(ULONG count, AM_MEDIA_TYPE** types, ULONG* fetched) {
     ULONG got = 0;
+    auto discard = [&](ULONG n) {
+      for (ULONG i = 0; i < n; ++i) {
+        if (!types[i]) continue;
+        freeMt(*types[i]);
+        CoTaskMemFree(types[i]);
+        types[i] = nullptr;
+      }
+      if (fetched) *fetched = 0;
+    };
     while (got < count && index < kModeCount) {
       auto* mt = static_cast<AM_MEDIA_TYPE*>(CoTaskMemAlloc(sizeof(AM_MEDIA_TYPE)));
-      if (!mt) return E_OUTOFMEMORY;
+      if (!mt) {
+        discard(got);
+        return E_OUTOFMEMORY;
+      }
       ZeroMemory(mt, sizeof(*mt));
       AM_MEDIA_TYPE built{};
       if (FAILED(makeType(index, built))) {
         CoTaskMemFree(mt);
+        discard(got);
         return E_OUTOFMEMORY;
       }
       *mt = built;
@@ -698,7 +711,7 @@ void Pin::startStreaming() {
 }
 
 void Pin::streamLoop() {
-  CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+  const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   cfx::SharedFrames shared;
   shared.open();
   std::vector<uint8_t> raw;
@@ -732,7 +745,7 @@ void Pin::streamLoop() {
     sample->Release();
   }
   shared.close();
-  CoUninitialize();
+  if (com == S_OK) CoUninitialize();
 }
 
 STDMETHODIMP Filter::QueryInterface(REFIID riid, void** ppv) {
@@ -936,7 +949,7 @@ extern "C" __declspec(dllexport) HRESULT __stdcall DllRegisterServer() {
   const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
   const HRESULT hkcu = writeHive(HKEY_CURRENT_USER);
   writeHive(HKEY_LOCAL_MACHINE);
-  if (SUCCEEDED(com)) CoUninitialize();
+  if (com == S_OK) CoUninitialize();
   return hkcu;
 }
 
