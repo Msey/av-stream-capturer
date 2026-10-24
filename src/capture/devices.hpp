@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -28,5 +29,13 @@ std::wstring virtualCablePlaybackId(const std::vector<AudioEndpoint>& outputs);
 std::wstring virtualCableMicrophoneName(const std::vector<AudioEndpoint>& inputs);
 
 std::vector<CameraDevice> enumerateCameras();
+
+struct AudioApp {
+  std::uint32_t pid = 0;
+  std::wstring name;
+};
+
+std::vector<AudioApp> enumerateAudioApps();
+std::wstring speakerId();
 
 }  // namespace cfx

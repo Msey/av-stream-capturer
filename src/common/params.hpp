@@ -32,6 +32,10 @@ struct Params {
   std::atomic<float> wasapiMs{0.f};
   std::atomic<int> faceFound{0};
   std::atomic<float> captureFps{0.f};
+  std::atomic<int> captions{0};
+  std::atomic<int> captionsRefine{1};
+  std::atomic<float> captionChunkMs{0.f};
+  std::atomic<float> captionRefineMs{0.f};
 
   void applyPreset(Preset presetValue) {
     preset.store(static_cast<int>(presetValue));

@@ -1,6 +1,11 @@
 /build/
 /out/
 /plans/
+/third_party/cache/
+/third_party/sherpa-onnx/
+/third_party/sherpa-onnx-*.tar.bz2
+/models/asr/
+/models/tts/
 /third_party/onnxruntime-win-x64-*.zip
 /third_party/buffalo_sc/
 /third_party/vadrv/
