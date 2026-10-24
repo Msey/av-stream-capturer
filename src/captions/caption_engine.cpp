@@ -8,6 +8,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <limits>
 #include <mutex>
 #include <thread>
 #include <utility>
@@ -33,6 +34,13 @@ double nowMs() {
   return static_cast<double>(value.QuadPart) / freq;
 }
 
+struct ComApartment {
+  HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+  ~ComApartment() {
+    if (SUCCEEDED(hr)) CoUninitialize();
+  }
+};
+
 }  // namespace
 
 struct CaptionEngine::Impl {
@@ -44,6 +52,7 @@ struct CaptionEngine::Impl {
   std::atomic<std::uint32_t> pid{0};
   std::atomic<int> exclude{1};
   std::atomic<int> refineEnabled{1};
+  std::atomic<int> refineFailed{0};
 
   std::mutex viewMu;
   CaptionView view;
@@ -83,10 +92,11 @@ void CaptionEngine::stop() {
   if (impl_->listen.joinable()) impl_->listen.join();
   if (impl_->refine.joinable()) impl_->refine.join();
   std::lock_guard lock(impl_->viewMu);
-  if (impl_->view.status.empty() || impl_->view.status == "Слушаю собеседника") impl_->view.status = "Субтитры выключены";
+  impl_->view.status = "Субтитры выключены";
 }
 
 void CaptionEngine::setSource(std::uint32_t pid, bool exclude) {
+  if (pid == 0) exclude = true;
   impl_->pid.store(pid);
   impl_->exclude.store(exclude ? 1 : 0);
   impl_->restart.store(1);
@@ -109,7 +119,7 @@ CaptionView CaptionEngine::copyView() const {
 }
 
 void CaptionEngine::listenMain() {
-  const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+  [[maybe_unused]] const ComApartment com;
   auto setStatus = [this](const std::string& text) {
     std::lock_guard lock(impl_->viewMu);
     impl_->view.status = text;
@@ -122,17 +132,13 @@ void CaptionEngine::listenMain() {
     setStatus("Нет модели распознавания рядом с программой");
     Sleep(500);
   }
-  if (!impl_->run.load()) {
-    if (SUCCEEDED(com)) CoUninitialize();
-    return;
-  }
+  if (!impl_->run.load()) return;
 
   setStatus("Загружаю модель речи…");
   StreamingRecognizer tone(models.toneModel, models.toneTokens);
   if (!tone.ok()) {
     setStatus("Модель речи не открылась");
     while (impl_->run.load()) Sleep(200);
-    if (SUCCEEDED(com)) CoUninitialize();
     return;
   }
 
@@ -143,7 +149,6 @@ void CaptionEngine::listenMain() {
   std::vector<float> packet(48000);
   int rate = 16000;
   int seenClear = impl_->clearRequest.load();
-  bool primed = false;
   ULONGLONG lastAudio = GetTickCount64();
 
   auto publishDraft = [this](const std::string& text) {
@@ -165,6 +170,7 @@ void CaptionEngine::listenMain() {
     job.samples.swap(phrase);
     {
       std::lock_guard lock(impl_->viewMu);
+      if (impl_->clearRequest.load() != seenClear) return;
       impl_->view.lines.push_back(CaptionLine{job.id, text});
       if (impl_->view.lines.size() > 200) impl_->view.lines.erase(impl_->view.lines.begin());
       impl_->view.draft.clear();
@@ -195,19 +201,30 @@ void CaptionEngine::listenMain() {
       continue;
     }
     rate = loopback.sampleRate();
+    if (rate < 8000 || rate > 192000) {
+      loopback.close();
+      setStatus("Неподходящая частота звука собеседника");
+      for (int i = 0; i < 10 && impl_->run.load() && !impl_->restart.load(); ++i) Sleep(100);
+      continue;
+    }
+    if (impl_->pid.load() != pid || (impl_->exclude.load() != 0) != exclude) {
+      loopback.close();
+      continue;
+    }
     tone.restart();
     phrase.clear();
-    primed = false;
     if (rate > 0) {
       std::vector<float> pad(static_cast<size_t>(rate * 3 / 10), 0.f);
       tone.accept(rate, pad.data(), static_cast<int>(pad.size()));
       tone.decode();
     }
-    primed = true;
     impl_->restart.store(0);
-    setStatus(punctuation ? "Слушаю собеседника" : "Слушаю собеседника, без пунктуации");
+    if (punctuation && impl_->refineEnabled.load() && impl_->refineFailed.load()) {
+      setStatus("Пунктуация не открылась");
+    } else {
+      setStatus(punctuation ? "Слушаю собеседника" : "Слушаю собеседника, без пунктуации");
+    }
     lastAudio = GetTickCount64();
-    (void)primed;
 
     while (impl_->run.load() && !impl_->restart.load()) {
       if (impl_->clearRequest.load() != seenClear) {
@@ -228,7 +245,6 @@ void CaptionEngine::listenMain() {
           tone.accept(rate, zeros.data(), silence);
           tone.decode();
           params_.captionChunkMs.store(static_cast<float>(nowMs() - started));
-          phrase.insert(phrase.end(), zeros.begin(), zeros.end());
           lastAudio = now;
           const std::string partial = tone.text();
           if (!partial.empty()) publishDraft(partial);
@@ -244,29 +260,30 @@ void CaptionEngine::listenMain() {
       phrase.insert(phrase.end(), packet.begin(), packet.begin() + got);
       const std::string partial = tone.text();
       if (!partial.empty()) publishDraft(partial);
-      const bool tooLong = rate > 0 && static_cast<int>(phrase.size()) > rate * 20;
+      const bool tooLong = phrase.size() > static_cast<size_t>(rate) * 20;
       finishPhrase(tooLong);
     }
     if (!phrase.empty()) finishPhrase(true);
     loopback.close();
   }
 
-  if (SUCCEEDED(com)) CoUninitialize();
 }
 
 void CaptionEngine::refineMain() {
-  const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+  [[maybe_unused]] const ComApartment com;
   AsrPaths models;
   while (impl_->run.load() && (models.gigaModel.empty() || models.gigaTokens.empty())) {
     models = findAsrModels(exeDirectory());
     if (!models.gigaModel.empty() && !models.gigaTokens.empty()) break;
     Sleep(200);
   }
-  if (!impl_->run.load()) {
-    if (SUCCEEDED(com)) CoUninitialize();
-    return;
-  }
+  if (!impl_->run.load()) return;
   PhraseRefiner refiner(models.gigaModel, models.gigaTokens);
+  if (!refiner.ok()) {
+    impl_->refineFailed.store(1);
+    std::lock_guard lock(impl_->viewMu);
+    if (impl_->view.status == "Слушаю собеседника") impl_->view.status = "Пунктуация не открылась";
+  }
   while (impl_->run.load()) {
     Impl::Job job;
     {
@@ -277,7 +294,9 @@ void CaptionEngine::refineMain() {
       job = std::move(impl_->jobs.back());
       impl_->jobs.clear();
     }
-    if (!refiner.ok() || job.samples.empty()) continue;
+    if (!refiner.ok() || job.samples.empty() || job.samples.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
+      continue;
+    }
     const double started = nowMs();
     const std::string better = refiner.refine(job.rate, job.samples.data(), static_cast<int>(job.samples.size()));
     params_.captionRefineMs.store(static_cast<float>(nowMs() - started));
@@ -290,7 +309,6 @@ void CaptionEngine::refineMain() {
       }
     }
   }
-  if (SUCCEEDED(com)) CoUninitialize();
 }
 
 }  // namespace cfx

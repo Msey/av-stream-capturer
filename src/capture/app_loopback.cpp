@@ -258,13 +258,21 @@ int AppLoopback::read(float* dst, int maxFrames, int timeoutMs) {
     UINT32 frames = 0;
     DWORD flags = 0;
     if (FAILED(impl_->capture->GetBuffer(&data, &frames, &flags, nullptr, nullptr))) return written > 0 ? written : -1;
+    struct Packet {
+      IAudioCaptureClient* capture = nullptr;
+      UINT32 frames = 0;
+      ~Packet() {
+        if (capture) capture->ReleaseBuffer(frames);
+      }
+    } packetRelease{impl_->capture, frames};
+    if (frames == 0) continue;
+    if (frames > 48000) return written > 0 ? written : -1;
     const bool silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0;
     const int count = static_cast<int>(frames);
     const int room = maxFrames - written;
     const int take = std::min(count, room);
     std::vector<float> mono(static_cast<size_t>(count));
     toMono(data, count, impl_->format, silent, mono.data());
-    impl_->capture->ReleaseBuffer(frames);
     std::copy(mono.begin(), mono.begin() + take, dst + written);
     written += take;
     if (take < count) impl_->pending.insert(impl_->pending.end(), mono.begin() + take, mono.end());

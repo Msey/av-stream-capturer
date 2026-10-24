@@ -10,8 +10,6 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdint>
-#include <cstring>
-#include <fstream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -40,10 +38,52 @@ struct Format {
   bool isFloat = true;
 };
 
-bool wordByte(unsigned char value) {
-  if ((value & 0xC0) == 0x80) return true;
-  if (value >= 0xC0) return true;
-  return std::isalnum(value) != 0;
+char32_t codepointAt(const std::string& text, size_t index) {
+  if (index >= text.size()) return 0;
+  const unsigned char lead = static_cast<unsigned char>(text[index]);
+  int length = 1;
+  char32_t value = lead;
+  if ((lead & 0xE0) == 0xC0) {
+    length = 2;
+    value = lead & 0x1F;
+  } else if ((lead & 0xF0) == 0xE0) {
+    length = 3;
+    value = lead & 0x0F;
+  } else if ((lead & 0xF8) == 0xF0) {
+    length = 4;
+    value = lead & 0x07;
+  }
+  if (index + static_cast<size_t>(length) > text.size()) return lead;
+  for (int i = 1; i < length; ++i) {
+    value = (value << 6) | (static_cast<unsigned char>(text[index + static_cast<size_t>(i)]) & 0x3F);
+  }
+  return value;
+}
+
+bool isLetter(char32_t value) {
+  if ((value >= U'0' && value <= U'9') || (value >= U'A' && value <= U'Z') || (value >= U'a' && value <= U'z')) return true;
+  return value >= 0x0400 && value <= 0x04FF;
+}
+
+bool letterBefore(const std::string& text, size_t index) {
+  if (index == 0 || index > text.size()) return false;
+  size_t at = index - 1;
+  while (at > 0 && (static_cast<unsigned char>(text[at]) & 0xC0) == 0x80) --at;
+  return isLetter(codepointAt(text, at));
+}
+
+void trimUtf8(std::string& text) {
+  while (!text.empty()) {
+    size_t at = text.size() - 1;
+    while (at > 0 && (static_cast<unsigned char>(text[at]) & 0xC0) == 0x80) --at;
+    const unsigned char lead = static_cast<unsigned char>(text[at]);
+    int need = 1;
+    if ((lead & 0xE0) == 0xC0) need = 2;
+    else if ((lead & 0xF0) == 0xE0) need = 3;
+    else if ((lead & 0xF8) == 0xF0) need = 4;
+    if ((lead & 0xC0) != 0x80 && text.size() - at >= static_cast<size_t>(need)) return;
+    text.resize(at);
+  }
 }
 
 std::string applyStress(const std::string& text, const std::wstring& dictionaryPath) {
@@ -72,9 +112,9 @@ std::string applyStress(const std::string& text, const std::wstring& dictionaryP
   for (const auto& rule : rules) {
     size_t at = 0;
     while ((at = out.find(rule.first, at)) != std::string::npos) {
-      const bool left = at == 0 || !wordByte(static_cast<unsigned char>(out[at - 1]));
+      const bool left = !letterBefore(out, at);
       const size_t after = at + rule.first.size();
-      const bool right = after >= out.size() || !wordByte(static_cast<unsigned char>(out[after]));
+      const bool right = after >= out.size() || !isLetter(codepointAt(out, after));
       if (left && right) {
         out.replace(at, rule.first.size(), rule.second);
         at += rule.second.size();
@@ -192,6 +232,8 @@ struct Playback {
     else if (SUCCEEDED(client->GetMixFormat(&mix)) && mix) chosen = mix;
     if (!chosen) {
       error = "Динамики не сообщили формат";
+      if (closest) CoTaskMemFree(closest);
+      if (mix) CoTaskMemFree(mix);
       close();
       return false;
     }
@@ -203,6 +245,15 @@ struct Playback {
       const auto* ext = reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(chosen);
       format.isFloat = IsEqualGUID(ext->SubFormat, kIeeeFloat) != FALSE;
     }
+    const bool float32 = format.isFloat && format.bits == 32;
+    const bool pcm16 = !format.isFloat && format.bits == 16;
+    if ((!float32 && !pcm16) || format.channels < 1 || format.channels > 8) {
+      error = "Формат динамиков не поддерживается";
+      if (closest) CoTaskMemFree(closest);
+      if (mix) CoTaskMemFree(mix);
+      close();
+      return false;
+    }
     hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 100 * 10000, 0, chosen, nullptr);
     if (closest) CoTaskMemFree(closest);
     if (mix) CoTaskMemFree(mix);
@@ -212,6 +263,11 @@ struct Playback {
       return false;
     }
     client->GetBufferSize(&bufferFrames);
+    if (bufferFrames == 0) {
+      error = "Динамики не выделили буфер";
+      close();
+      return false;
+    }
     hr = client->GetService(IID_PPV_ARGS(&render));
     if (FAILED(hr) || !render || FAILED(client->Start())) {
       error = "Поток речи не запустился";
@@ -291,7 +347,10 @@ SpeechPlayer::~SpeechPlayer() {
 
 void SpeechPlayer::speak(std::string text) {
   text = trimCopy(std::move(text));
-  if (text.size() > 8000) text.resize(8000);
+  if (text.size() > 8000) {
+    text.resize(8000);
+    trimUtf8(text);
+  }
   if (text.empty()) return;
   if (!impl_->run.load()) {
     if (impl_->thread.joinable()) impl_->thread.join();
@@ -324,8 +383,15 @@ std::string SpeechPlayer::menuLabel() const {
   return impl_->own.load() ? "Прочитать своим голосом" : "Прочитать вслух";
 }
 
+struct ComApartment {
+  HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+  ~ComApartment() {
+    if (SUCCEEDED(hr)) CoUninitialize();
+  }
+};
+
 void SpeechPlayer::threadMain() {
-  const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+  [[maybe_unused]] const ComApartment com;
   auto setStatus = [this](const std::string& text) {
     std::lock_guard lock(impl_->statusMu);
     impl_->status = text;
@@ -336,7 +402,6 @@ void SpeechPlayer::threadMain() {
   if (!speaker.ok()) {
     setStatus("Голос не открылся. Нужны модель Piper и espeak-ng-data рядом с программой.");
     impl_->run.store(0);
-    if (SUCCEEDED(com)) CoUninitialize();
     return;
   }
   impl_->own.store(speaker.ownVoice() ? 1 : 0);
@@ -389,7 +454,6 @@ void SpeechPlayer::threadMain() {
     impl_->active.store(0);
     if (!stopped && generation == impl_->generation.load()) setStatus(readyText(impl_->own.load() != 0));
   }
-  if (SUCCEEDED(com)) CoUninitialize();
 }
 
 }  // namespace cfx

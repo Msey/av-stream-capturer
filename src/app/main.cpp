@@ -57,8 +57,9 @@ std::string utf8(const std::wstring& text) {
   if (text.empty()) return {};
   const int size = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, nullptr, 0, nullptr, nullptr);
   if (size <= 1) return {};
-  std::string out(static_cast<size_t>(size - 1), '\0');
+  std::string out(static_cast<size_t>(size), '\0');
   WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, out.data(), size, nullptr, nullptr);
+  out.resize(static_cast<size_t>(size - 1));
   return out;
 }
 
@@ -171,6 +172,20 @@ bool blankText(const std::string& text) {
   return true;
 }
 
+int snapUtf8(const std::string& text, int index, bool toEnd) {
+  if (index <= 0) return 0;
+  const int length = static_cast<int>(std::min(text.size(), static_cast<size_t>(0x7fffffff)));
+  if (index >= length) return length;
+  auto continuation = [](unsigned char value) { return (value & 0xC0) == 0x80; };
+  if (!continuation(static_cast<unsigned char>(text[static_cast<size_t>(index)]))) return index;
+  if (toEnd) {
+    while (index < length && continuation(static_cast<unsigned char>(text[static_cast<size_t>(index)]))) ++index;
+  } else {
+    while (index > 0 && continuation(static_cast<unsigned char>(text[static_cast<size_t>(index)]))) --index;
+  }
+  return index;
+}
+
 void drawTranscript() {
   ImGui::BeginChild("transcript", ImVec2(0, 0), false);
   bool captionsOn = g_params.captions.load() != 0;
@@ -271,9 +286,9 @@ void drawTranscript() {
           int from = state->GetSelectionStart();
           int to = state->GetSelectionEnd();
           if (from > to) std::swap(from, to);
-          const int length = static_cast<int>(shown.size());
-          from = std::clamp(from, 0, length);
-          to = std::clamp(to, 0, length);
+          const int length = static_cast<int>(std::min(shown.size(), static_cast<size_t>(0x7fffffff)));
+          from = snapUtf8(shown, std::clamp(from, 0, length), false);
+          to = snapUtf8(shown, std::clamp(to, 0, length), true);
           if (to > from) selected = shown.substr(static_cast<size_t>(from), static_cast<size_t>(to - from));
         }
       }

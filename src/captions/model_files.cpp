@@ -13,54 +13,59 @@ namespace {
 
 namespace fs = std::filesystem;
 
-fs::path findTaggedFile(const fs::path& root, const wchar_t* directoryTag, const std::wstring& name) {
+template <typename Visit>
+bool walkFiles(const fs::path& root, Visit visit) {
   std::error_code error;
-  if (root.empty() || !fs::exists(root, error)) return {};
-  for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, error), end; it != end;
-       it.increment(error)) {
-    if (error) {
-      error.clear();
-      continue;
-    }
-    if (!it->is_regular_file(error) || it->path().filename() != name) continue;
-    if (it->path().wstring().find(directoryTag) != std::wstring::npos) return it->path();
+  if (root.empty() || !fs::exists(root, error) || error) return false;
+  fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, error);
+  if (error) return false;
+  const fs::recursive_directory_iterator end;
+  while (it != end) {
+    if (visit(*it)) return true;
+    it.increment(error);
+    if (error) return false;
   }
-  return {};
+  return false;
+}
+
+fs::path findTaggedFile(const fs::path& root, const wchar_t* directoryTag, const std::wstring& name) {
+  fs::path found;
+  walkFiles(root, [&](const fs::directory_entry& entry) {
+    std::error_code error;
+    if (!entry.is_regular_file(error) || error || entry.path().filename() != name) return false;
+    if (entry.path().wstring().find(directoryTag) == std::wstring::npos) return false;
+    found = entry.path();
+    return true;
+  });
+  return found;
 }
 
 fs::path findDir(const fs::path& root, const std::wstring& name) {
-  std::error_code error;
-  if (root.empty() || !fs::exists(root, error)) return {};
-  for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, error), end; it != end;
-       it.increment(error)) {
-    if (error) {
-      error.clear();
-      continue;
-    }
-    if (it->is_directory(error) && it->path().filename() == name) return it->path();
-  }
-  return {};
+  fs::path found;
+  walkFiles(root, [&](const fs::directory_entry& entry) {
+    std::error_code error;
+    if (!entry.is_directory(error) || error || entry.path().filename() != name) return false;
+    found = entry.path();
+    return true;
+  });
+  return found;
 }
 
 fs::path findOnnx(const fs::path& root, bool wantRuslan) {
-  std::error_code error;
-  if (root.empty() || !fs::exists(root, error)) return {};
   fs::path fallback;
-  for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, error), end; it != end;
-       it.increment(error)) {
-    if (error) {
-      error.clear();
-      continue;
-    }
-    if (!it->is_regular_file(error)) continue;
-    const fs::path path = it->path();
-    const std::wstring name = path.filename().wstring();
-    if (name.size() < 5 || name.substr(name.size() - 5) != L".onnx") continue;
-    if (name.size() >= 10 && name.substr(name.size() - 10) == L".onnx.json") continue;
+  walkFiles(root, [&](const fs::directory_entry& entry) {
+    std::error_code error;
+    if (!entry.is_regular_file(error) || error) return false;
+    const std::wstring name = entry.path().filename().wstring();
+    if (name.size() < 5 || name.substr(name.size() - 5) != L".onnx") return false;
     const bool ruslan = name.find(L"ruslan") != std::wstring::npos;
-    if (wantRuslan && ruslan) return path;
-    if (!wantRuslan && fallback.empty()) fallback = path;
-  }
+    if (wantRuslan && ruslan) {
+      fallback = entry.path();
+      return true;
+    }
+    if (!wantRuslan && fallback.empty()) fallback = entry.path();
+    return false;
+  });
   return fallback;
 }
 
@@ -85,9 +90,10 @@ std::wstring shortPath(const std::wstring& path) {
 }  // namespace
 
 std::wstring exeDirectory() {
-  wchar_t path[MAX_PATH]{};
-  GetModuleFileNameW(nullptr, path, MAX_PATH);
-  std::wstring text(path);
+  std::wstring text(32768, L'\0');
+  const DWORD length = GetModuleFileNameW(nullptr, text.data(), static_cast<DWORD>(text.size()));
+  if (length == 0 || length >= text.size()) return {};
+  text.resize(length);
   const auto slash = text.find_last_of(L"\\/");
   if (slash != std::wstring::npos) text.resize(slash);
   return text;
@@ -97,8 +103,9 @@ std::string wideToUtf8(const std::wstring& text) {
   if (text.empty()) return {};
   const int size = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, nullptr, 0, nullptr, nullptr);
   if (size <= 1) return {};
-  std::string out(static_cast<size_t>(size - 1), '\0');
+  std::string out(static_cast<size_t>(size), '\0');
   WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, out.data(), size, nullptr, nullptr);
+  out.resize(static_cast<size_t>(size - 1));
   return out;
 }
 

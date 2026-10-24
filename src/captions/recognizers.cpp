@@ -41,7 +41,7 @@ StreamingRecognizer::~StreamingRecognizer() {
 bool StreamingRecognizer::ok() const { return impl_->recognizer && impl_->stream; }
 
 void StreamingRecognizer::accept(int sampleRate, const float* samples, int count) {
-  if (!ok() || !samples || count <= 0) return;
+  if (!ok() || !samples || count <= 0 || sampleRate <= 0) return;
   SherpaOnnxOnlineStreamAcceptWaveform(impl_->stream, sampleRate, samples, count);
 }
 
@@ -155,16 +155,16 @@ std::vector<float> VoiceSpeaker::synthesize(const std::string& text, int& sample
   generation.sid = 0;
   generation.speed = 1.f;
   generation.silence_scale = 0.2f;
-  const SherpaOnnxGeneratedAudio* audio =
-      SherpaOnnxOfflineTtsGenerateWithConfig(impl_->tts, text.c_str(), &generation, nullptr, nullptr);
-  if (!audio || !audio->samples || audio->n <= 0) {
-    if (audio) SherpaOnnxDestroyOfflineTtsGeneratedAudio(audio);
-    return {};
-  }
-  sampleRate = audio->sample_rate;
-  std::vector<float> samples(audio->samples, audio->samples + audio->n);
-  SherpaOnnxDestroyOfflineTtsGeneratedAudio(audio);
-  return samples;
+  struct Generated {
+    const SherpaOnnxGeneratedAudio* audio = nullptr;
+    ~Generated() {
+      if (audio) SherpaOnnxDestroyOfflineTtsGeneratedAudio(audio);
+    }
+  } generated;
+  generated.audio = SherpaOnnxOfflineTtsGenerateWithConfig(impl_->tts, text.c_str(), &generation, nullptr, nullptr);
+  if (!generated.audio || !generated.audio->samples || generated.audio->n <= 0) return {};
+  sampleRate = generated.audio->sample_rate;
+  return std::vector<float>(generated.audio->samples, generated.audio->samples + generated.audio->n);
 }
 
 }  // namespace cfx
