@@ -235,6 +235,12 @@ void drawTranscript() {
   const cfx::CaptionView view = g_captions->copyView();
   ImGui::TextWrapped("%s", view.status.c_str());
   ImGui::TextWrapped("%s", g_speech->status().c_str());
+  bool readToCall = g_params.readToCall.load() != 0;
+  const char* routeLabel = g_speech->ownVoice() ? "Читать свой голос в микрофон созвона" : "Читать ruslan в микрофон созвона";
+  if (ImGui::Checkbox(routeLabel, &readToCall)) {
+    g_params.readToCall.store(readToCall ? 1 : 0);
+    g_speech->setRouteToCall(readToCall);
+  }
 
   std::string built;
   for (const cfx::CaptionLine& line : view.lines) {

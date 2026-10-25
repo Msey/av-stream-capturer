@@ -34,6 +34,7 @@ struct Params {
   std::atomic<float> captureFps{0.f};
   std::atomic<int> captions{0};
   std::atomic<int> captionsRefine{1};
+  std::atomic<int> readToCall{0};
   std::atomic<float> captionChunkMs{0.f};
   std::atomic<float> captionRefineMs{0.f};
 

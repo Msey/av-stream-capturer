@@ -14,7 +14,9 @@ class SpeechPlayer {
 
   void speak(std::string text);
   void stop();
+  void setRouteToCall(bool enabled);
   bool speaking() const;
+  bool ownVoice() const;
   std::string status() const;
   std::string menuLabel() const;
 

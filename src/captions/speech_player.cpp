@@ -185,11 +185,12 @@ struct Playback {
     client = nullptr;
   }
 
-  bool open(std::string& error) {
+  bool open(bool toCall, std::string& error) {
     close();
-    const std::wstring id = speakerId();
+    const std::wstring id = toCall ? virtualCablePlaybackId(enumerateAudio(false)) : speakerId();
     if (id.empty()) {
-      error = "Нет динамиков кроме виртуального кабеля";
+      error = toCall ? "Нет виртуального кабеля, голос не попадёт в созвон"
+                     : "Нет динамиков кроме виртуального кабеля";
       return false;
     }
     IMMDeviceEnumerator* enumerator = nullptr;
@@ -202,14 +203,14 @@ struct Playback {
     hr = enumerator->GetDevice(id.c_str(), &device);
     enumerator->Release();
     if (FAILED(hr) || !device) {
-      error = "Динамики не найдены";
+      error = toCall ? "Кабель созвона не найден" : "Динамики не найдены";
       return false;
     }
     hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&client));
     device->Release();
     if (FAILED(hr) || !client) {
       client = nullptr;
-      error = "Не удалось открыть динамики";
+      error = toCall ? "Не удалось открыть кабель созвона" : "Не удалось открыть динамики";
       return false;
     }
     WAVEFORMATEXTENSIBLE desired{};
@@ -231,7 +232,7 @@ struct Playback {
     else if (hr == S_FALSE && closest) chosen = closest;
     else if (SUCCEEDED(client->GetMixFormat(&mix)) && mix) chosen = mix;
     if (!chosen) {
-      error = "Динамики не сообщили формат";
+      error = "Устройство вывода не сообщило формат";
       if (closest) CoTaskMemFree(closest);
       if (mix) CoTaskMemFree(mix);
       close();
@@ -247,8 +248,9 @@ struct Playback {
     }
     const bool float32 = format.isFloat && format.bits == 32;
     const bool pcm16 = !format.isFloat && format.bits == 16;
-    if ((!float32 && !pcm16) || format.channels < 1 || format.channels > 8) {
-      error = "Формат динамиков не поддерживается";
+    if (format.rate < 8000 || format.rate > 192000 || (!float32 && !pcm16) || format.channels < 1 ||
+        format.channels > 8) {
+      error = "Формат вывода не поддерживается";
       if (closest) CoTaskMemFree(closest);
       if (mix) CoTaskMemFree(mix);
       close();
@@ -264,7 +266,7 @@ struct Playback {
     }
     client->GetBufferSize(&bufferFrames);
     if (bufferFrames == 0) {
-      error = "Динамики не выделили буфер";
+      error = "Устройство вывода не выделило буфер";
       close();
       return false;
     }
@@ -315,9 +317,17 @@ struct Playback {
   }
 };
 
-std::string readyText(bool own) {
-  if (own) return "Свой голос готов. Читаю в динамики, не в микрофон созвона.";
-  return "Голос ruslan готов. Свою модель положите в models\\tts\\my_voice. Читаю в динамики, не в микрофон созвона.";
+std::string readyText(bool own, bool toCall) {
+  const char* where = toCall ? "Читаю в микрофон созвона." : "Читаю в динамики, не в микрофон созвона.";
+  if (own) return std::string("Свой голос готов. ") + where;
+  return std::string("Голос ruslan готов. Свою модель положите в models\\tts\\my_voice. ") + where;
+}
+
+std::string idleStatus(bool own, bool toCall) {
+  if (toCall && virtualCablePlaybackId(enumerateAudio(false)).empty()) {
+    return "Нет виртуального кабеля, голос ruslan не попадёт в созвон.";
+  }
+  return readyText(own, toCall);
 }
 
 }  // namespace
@@ -328,6 +338,8 @@ struct SpeechPlayer::Impl {
   std::atomic<int> active{0};
   std::atomic<int> generation{0};
   std::atomic<int> own{0};
+  std::atomic<int> toCall{0};
+  std::atomic<int> voiceReady{0};
   std::mutex mu;
   std::condition_variable cv;
   std::string pending;
@@ -372,7 +384,21 @@ void SpeechPlayer::stop() {
   impl_->cv.notify_all();
 }
 
+void SpeechPlayer::setRouteToCall(bool enabled) {
+  const int next = enabled ? 1 : 0;
+  const bool changed = impl_->toCall.exchange(next) != next;
+  if (changed && impl_->active.load()) stop();
+  if (!impl_->voiceReady.load() || impl_->active.load()) return;
+  const std::string nextStatus = idleStatus(impl_->own.load() != 0, enabled);
+  if (impl_->active.load()) return;
+  std::lock_guard lock(impl_->statusMu);
+  if (impl_->active.load()) return;
+  impl_->status = nextStatus;
+}
+
 bool SpeechPlayer::speaking() const { return impl_->active.load() != 0; }
+
+bool SpeechPlayer::ownVoice() const { return impl_->own.load() != 0; }
 
 std::string SpeechPlayer::status() const {
   std::lock_guard lock(impl_->statusMu);
@@ -405,8 +431,9 @@ void SpeechPlayer::threadMain() {
     return;
   }
   impl_->own.store(speaker.ownVoice() ? 1 : 0);
+  impl_->voiceReady.store(1);
   const std::wstring stressPath = exe + L"\\models\\tts\\stress.txt";
-  setStatus(readyText(speaker.ownVoice()));
+  setStatus(idleStatus(speaker.ownVoice(), impl_->toCall.load() != 0));
 
   while (impl_->run.load()) {
     std::string text;
@@ -424,11 +451,12 @@ void SpeechPlayer::threadMain() {
       if (ch == '\r' || ch == '\n' || ch == '\t') ch = ' ';
     }
     const std::vector<std::string> parts = sentences(text);
+    const bool toCall = impl_->toCall.load() != 0;
     impl_->active.store(1);
-    setStatus("Читаю в динамики…");
+    setStatus(toCall ? "Читаю в микрофон созвона…" : "Читаю в динамики…");
     Playback playback;
     std::string error;
-    if (!playback.open(error)) {
+    if (!playback.open(toCall, error)) {
       setStatus(error);
       impl_->active.store(0);
       continue;
@@ -452,7 +480,12 @@ void SpeechPlayer::threadMain() {
     }
     playback.close();
     impl_->active.store(0);
-    if (!stopped && generation == impl_->generation.load()) setStatus(readyText(impl_->own.load() != 0));
+    bool queued = false;
+    {
+      std::lock_guard lock(impl_->mu);
+      queued = !impl_->pending.empty();
+    }
+    if (!queued) setStatus(idleStatus(impl_->own.load() != 0, impl_->toCall.load() != 0));
   }
 }
 
