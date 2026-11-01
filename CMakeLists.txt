@@ -11,7 +11,6 @@ endif()
 add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/third_party/imgui)
-set(ORT_DIR ${CMAKE_SOURCE_DIR}/third_party/onnxruntime)
 
 function(cfx_compile target)
   if(MSVC)
@@ -22,11 +21,6 @@ endfunction()
 add_library(cfx_audio STATIC src/audio/pitch_shifter.cpp)
 target_include_directories(cfx_audio PUBLIC ${CMAKE_SOURCE_DIR}/src)
 cfx_compile(cfx_audio)
-
-add_library(cfx_video STATIC src/video/face_effect.cpp)
-target_include_directories(cfx_video PUBLIC ${CMAKE_SOURCE_DIR}/src ${ORT_DIR}/include)
-target_link_libraries(cfx_video PUBLIC ${ORT_DIR}/lib/onnxruntime.lib)
-cfx_compile(cfx_video)
 
 add_library(ConferenceFxCam SHARED src/vcam/cam_filter.cpp)
 target_include_directories(ConferenceFxCam PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -53,7 +47,6 @@ target_include_directories(conference-fx PRIVATE
 )
 target_link_libraries(conference-fx PRIVATE
   cfx_audio
-  cfx_video
   mfplat
   mf
   mfreadwrite
@@ -79,15 +72,8 @@ target_link_options(conference-fx PRIVATE
 cfx_compile(conference-fx)
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT conference-fx)
 
-set(ORT_DLL ${ORT_DIR}/lib/onnxruntime.dll)
-set(ORT_SHARED ${ORT_DIR}/lib/onnxruntime_providers_shared.dll)
-
 function(cfx_copy_runtime target)
   add_custom_command(TARGET ${target} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ORT_DLL} $<TARGET_FILE_DIR:${target}>/onnxruntime.dll
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ORT_SHARED} $<TARGET_FILE_DIR:${target}>/onnxruntime_providers_shared.dll
-    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${target}>/models
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/models/ultraface.onnx $<TARGET_FILE_DIR:${target}>/models/ultraface.onnx
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:ConferenceFxCam> $<TARGET_FILE_DIR:${target}>/ConferenceFxCam.dll
     VERBATIM)
 endfunction()
@@ -98,16 +84,6 @@ cfx_copy_runtime(conference-fx)
 add_executable(pitch_test tests/pitch_test.cpp)
 target_link_libraries(pitch_test PRIVATE cfx_audio)
 cfx_compile(pitch_test)
-
-add_executable(pupil_test tests/pupil_test.cpp)
-target_include_directories(pupil_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
-cfx_compile(pupil_test)
-
-add_executable(face_test tests/face_test.cpp)
-target_link_libraries(face_test PRIVATE cfx_video)
-target_include_directories(face_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
-cfx_compile(face_test)
-cfx_copy_runtime(face_test)
 
 add_executable(vcam_smoke tests/vcam_smoke.cpp)
 target_link_libraries(vcam_smoke PRIVATE ole32 oleaut32 uuid strmiids)
@@ -200,7 +176,6 @@ endfunction()
 
 cfx_copy_sherpa_dlls(conference-fx)
 cfx_copy_speech_models(conference-fx)
-cfx_copy_sherpa_dlls(face_test)
 
 add_executable(caption_test tests/caption_test.cpp)
 target_link_libraries(caption_test PRIVATE cfx_captions)

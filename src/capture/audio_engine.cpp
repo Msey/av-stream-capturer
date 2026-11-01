@@ -425,7 +425,7 @@ void AudioEngine::threadMain() {
         shifter.setEnabled(params_.voiceEnabled.load() != 0);
         shifter.process(mono.data(), static_cast<int>(frames));
 
-        const float videoMs = params_.videoProcessMs.load() + params_.framePeriodMs.load();
+        const float videoMs = params_.framePeriodMs.load();
         const float algoMs = 1000.f * shifter.latencySamples() / static_cast<float>(captureRate);
         const float wasapiMs = params_.wasapiMs.load();
         float lipMs = videoMs + static_cast<float>(params_.lipExtraMs.load()) - algoMs - wasapiMs;

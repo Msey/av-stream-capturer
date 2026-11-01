@@ -2,7 +2,6 @@
 
 #include "capture/devices.hpp"
 #include "common/color.hpp"
-#include "video/face_effect.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -25,15 +24,6 @@ using Microsoft::WRL::ComPtr;
 
 namespace cfx {
 namespace {
-
-std::wstring modelBesideExe() {
-  wchar_t path[MAX_PATH]{};
-  GetModuleFileNameW(nullptr, path, MAX_PATH);
-  std::wstring text(path);
-  const auto slash = text.find_last_of(L"\\/");
-  if (slash != std::wstring::npos) text.resize(slash);
-  return text + L"\\models\\ultraface.onnx";
-}
 
 void fitSize(int& width, int& height) {
   if (width <= 1280 && height <= 720) {
@@ -78,7 +68,6 @@ struct CameraCapture::Impl {
   std::string status = "Камера ещё не запущена";
   mutable std::mutex frameMu;
   PreviewFrame frame;
-  FaceEffect effect;
 };
 
 CameraCapture::CameraCapture(Params& params, SharedFrames& shared) : params_(params), shared_(shared), impl_(new Impl) {}
@@ -90,10 +79,9 @@ CameraCapture::~CameraCapture() {
 
 void CameraCapture::start(std::wstring symbolicLink) {
   stop();
-  impl_->effect.load(modelBesideExe());
   {
     std::lock_guard lock(impl_->statusMu);
-    impl_->status = impl_->effect.ready() ? "Камера запускается" : "Модель зрачков не загрузилась: " + impl_->effect.status();
+    impl_->status = "Камера запускается";
   }
   {
     std::lock_guard lock(impl_->configMu);
@@ -214,7 +202,7 @@ void CameraCapture::threadMain() {
     }
     {
       std::lock_guard lock(impl_->statusMu);
-      impl_->status = impl_->effect.ready() ? "Камера идёт, зрачки считаются UltraFace" : "Камера идёт без модели зрачков";
+      impl_->status = "Камера идёт";
     }
 
     while (impl_->run.load() && !impl_->restart.load()) {
@@ -242,7 +230,6 @@ void CameraCapture::threadMain() {
       if (params_.mirror.load()) mirrorBgra(scaled.data(), outW, outH, outStride);
 
       const auto now = std::chrono::steady_clock::now();
-      const float dt = std::chrono::duration<float>(now - lastTick).count();
       const float periodMs = std::chrono::duration<float, std::milli>(now - lastTick).count();
       lastTick = now;
       if (periodMs > 1.f && periodMs < 500.f) {
@@ -252,21 +239,11 @@ void CameraCapture::threadMain() {
         params_.captureFps.store(fps <= 0.f ? instant : fps * 0.9f + instant * 0.1f);
       }
 
-      float processMs = 0.f;
-      bool face = false;
-      if (params_.pupilsEnabled.load() && impl_->effect.ready()) {
-        face = impl_->effect.apply(scaled.data(), outW, outH, outStride, dt, processMs);
-      }
-      params_.videoProcessMs.store(processMs);
-      params_.faceFound.store(face ? 1 : 0);
-
       shared_.publish(scaled.data(), outW, outH, outStride);
       {
         std::lock_guard lock(impl_->frameMu);
         impl_->frame.width = outW;
         impl_->frame.height = outH;
-        impl_->frame.processMs = processMs;
-        impl_->frame.face = face;
         impl_->frame.bgra.assign(scaled.begin(), scaled.begin() + static_cast<size_t>(outStride) * outH);
       }
     }

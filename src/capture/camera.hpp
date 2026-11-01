@@ -12,8 +12,6 @@ struct PreviewFrame {
   std::vector<uint8_t> bgra;
   int width = 0;
   int height = 0;
-  float processMs = 0.f;
-  bool face = false;
 };
 
 class CameraCapture {

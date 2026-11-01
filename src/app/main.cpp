@@ -464,22 +464,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     }
     ImGui::BeginChild("controls", ImVec2(0, 0), false);
 
-    const char* presets[] = {"Выключено", "Мультфильм", "Только зрачки", "Свой"};
-    if (ImGui::Combo("Пресет", &selectedPreset, presets, 4) && selectedPreset != static_cast<int>(cfx::Preset::Custom)) {
+    const char* presets[] = {"Выключено", "Мультфильм", "Свой"};
+    if (ImGui::Combo("Пресет", &selectedPreset, presets, 3) && selectedPreset != static_cast<int>(cfx::Preset::Custom)) {
       applyPreset(selectedPreset);
     }
 
     bool voice = g_params.voiceEnabled.load() != 0;
-    bool pupils = g_params.pupilsEnabled.load() != 0;
     bool mirror = g_params.mirror.load() != 0;
     bool monitor = g_params.monitor.load() != 0;
     if (ImGui::Checkbox("Мультяшный голос", &voice)) {
       g_params.voiceEnabled.store(voice ? 1 : 0);
-      selectedPreset = static_cast<int>(cfx::Preset::Custom);
-      g_params.preset.store(selectedPreset);
-    }
-    if (ImGui::Checkbox("Белые зрачки", &pupils)) {
-      g_params.pupilsEnabled.store(pupils ? 1 : 0);
       selectedPreset = static_cast<int>(cfx::Preset::Custom);
       g_params.preset.store(selectedPreset);
     }
@@ -505,8 +499,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     if (ImGui::SliderInt("Доп. сдвиг звука, мс", &lip, -80, 200)) g_params.lipExtraMs.store(lip);
 
     ImGui::Separator();
-    ImGui::Text("Кадр: %dx%d, %.1f мс, %.0f fps, лицо: %s", preview.width, preview.height,
-                g_params.videoProcessMs.load(), g_params.captureFps.load(), g_params.faceFound.load() ? "да" : "нет");
+    ImGui::Text("Кадр: %dx%d, %.0f fps", preview.width, preview.height, g_params.captureFps.load());
     ImGui::Text("Звук: %.0f мс (алгоритм %.0f + устройство %.0f)", g_params.audioTotalMs.load(),
                 g_params.audioAlgoMs.load(), g_params.wasapiMs.load());
     ImGui::Text("Субтитры: %.0f мс на кусок, пунктуация %.0f мс", g_params.captionChunkMs.load(),
